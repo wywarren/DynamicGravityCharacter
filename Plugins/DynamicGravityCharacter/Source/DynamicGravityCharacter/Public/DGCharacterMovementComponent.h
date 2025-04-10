@@ -1,4 +1,5 @@
-﻿// Copyright 2019, Caio Felipe de Moura Peixoto, All rights reserved.
+﻿// Copyright 2025, Warren Wang @ Qoobit Productions Inc., All rights reserved.
+// Copyright 2019, Caio Felipe de Moura Peixoto, All rights reserved.
 
 #pragma once
 
@@ -246,7 +247,11 @@ protected:
 	virtual bool StepUp(const FVector& FloorDirection, const FVector& Delta, const FHitResult& Hit, FStepDownResult* OutStepDownResult = NULL) override;
 	virtual FVector HandleSlopeBoosting(const FVector& SlideResult, const FVector& Delta, const float Time, const FVector& Normal, const FHitResult& Hit) const override;
 	virtual void RequestPathMove(const FVector& MoveInput) override;
+	#if (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 5) || ENGINE_MAJOR_VERSION == 4
 	virtual FVector GetLedgeMove(const FVector& OldLocation, const FVector& Delta, const FVector& GravDir) const override;
+	#elif ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+	virtual FVector GetLedgeMove(const FVector& OldLocation, const FVector& Delta, const FFindFloorResult & OldFloor) const override;
+	#endif
 	virtual void ApplyAccumulatedForces(float DeltaSeconds) override;
 	void ApplyRootMotionToVelocity(float deltaTime);
 	virtual void SetDefaultMovementMode() override;

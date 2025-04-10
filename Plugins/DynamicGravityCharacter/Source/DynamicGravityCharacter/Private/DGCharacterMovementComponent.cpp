@@ -1,3 +1,4 @@
+// Copyright 2025, Warren Wang @ Qoobit Productions Inc., All rights reserved.
 // Copyright 2019, Caio Felipe de Moura Peixoto, All rights reserved.
 
 
@@ -23,6 +24,17 @@ DECLARE_CYCLE_STAT(TEXT("Char PhysFalling"), STAT_CharPhysFalling, STATGROUP_Cha
 
 const float MAX_STEP_SIDE_Z = 0.08f;	// maximum z value for the normal on the vertical side of steps
 
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+namespace CharacterMovementCVars
+{
+	static bool bLedgeMovementDetectEdgeNormal = true;
+	FAutoConsoleVariableRef CVarLedgeMovementDetectEdgeNormal(
+		TEXT("p.LedgeMovement.DetectEdgeNormal"),
+		bLedgeMovementDetectEdgeNormal,
+		TEXT("Detect the normal of the ledge when avoiding walking off ledges, to try to find a better movement direction."),
+		ECVF_Default);
+}
+#endif
 
 UDGCharacterMovementComponent::UDGCharacterMovementComponent()
 {
@@ -112,7 +124,6 @@ FVector UDGCharacterMovementComponent::JumpDirection() const
 		return -WorldGravityNormal();
 	case EJumpDirectionMode::JDM_VerticalDirection:
 		return VerticalDirection;
-		return FVector();
 	default:
 		return CustomWalkableFloorNormal;
 	}
@@ -599,6 +610,7 @@ void UDGCharacterMovementComponent::RequestPathMove(const FVector& MoveInput)
 	Super::RequestPathMove(AdjustedMoveInput);
 }
 
+#if (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 5) || ENGINE_MAJOR_VERSION == 4
 FVector UDGCharacterMovementComponent::GetLedgeMove(const FVector& OldLocation, const FVector& Delta, const FVector& GravDir) const
 {
 	if (!HasValidData() || Delta.IsZero())
@@ -628,6 +640,95 @@ FVector UDGCharacterMovementComponent::GetLedgeMove(const FVector& OldLocation, 
 
 	return FVector::ZeroVector;
 }
+#elif ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+FVector UDGCharacterMovementComponent::GetLedgeMove(const FVector& OldLocation, const FVector& Delta, const FFindFloorResult& OldFloor) const
+{
+	if (!HasValidData() || Delta.IsZero())
+	{
+		return FVector::ZeroVector;
+	}
+
+	// Try to base the parallel movement test on the collision with the bottom of the capsule,
+	// which should inform where the perpendicular surface of the ledge is.
+	bool bUseLedgeNormal = false;
+	FVector LedgeNormal = FVector::ZeroVector;
+	FVector LedgeMove = FVector::ZeroVector;
+
+	if (CharacterMovementCVars::bLedgeMovementDetectEdgeNormal)
+	{
+		FFindFloorResult LedgeFloor = OldFloor;
+
+		// Flat base doesn't get capsule impact data for the floor in a meaningful way, so trace using a capsule at the last valid location.
+		if (bUseFlatBaseForFloorChecks)
+		{
+			UDGCharacterMovementComponent* MutableThis = const_cast<UDGCharacterMovementComponent*>(this);
+			MutableThis->bUseFlatBaseForFloorChecks = false;
+			FindFloor(OldLocation, LedgeFloor, false, NULL);
+			MutableThis->bUseFlatBaseForFloorChecks = true;
+		}
+
+		if (!LedgeFloor.IsWalkableFloor())
+		{
+			// Fall back to current floor, though this is likely unwalkable, but may contain a usable hit.
+			LedgeFloor = CurrentFloor;
+		}
+
+		// Check previous (valid) walkable floor location to get data about the ledge
+		if (LedgeFloor.bBlockingHit && GetGravitySpaceZ(LedgeFloor.HitResult.Normal) > UE_KINDA_SMALL_NUMBER)
+		{
+			// It would be nice to use HitResult.Normal, but the quality of this normal doesn't seem as good as ImpactNormal (contains off-axis values for simple shapes).
+			LedgeNormal = (LedgeFloor.HitResult.ImpactNormal ^ LedgeFloor.HitResult.Normal);
+			LedgeNormal = (LedgeFloor.HitResult.ImpactNormal ^ LedgeNormal);
+			LedgeNormal = ProjectToGravityFloor(LedgeNormal).GetSafeNormal();
+			LedgeMove = ComputeSlideVector(Delta, 1.0f, -LedgeNormal, LedgeFloor.HitResult);
+			bUseLedgeNormal = true;
+		}
+	}
+
+	// In case of no good estimate of ledge, fall back to movement direction.
+	if (LedgeNormal.IsZero())
+	{
+		LedgeMove = Delta;
+		bUseLedgeNormal = false;
+	}
+
+	if (bUseLedgeNormal)
+	{
+		bool bLedgeHit = CheckLedgeDirection(OldLocation, LedgeMove, OldFloor);
+		if (bLedgeHit)
+		{
+			return LedgeMove;
+		}
+	}
+	else
+	{
+		FVector SideDir(Delta.Y, -1.f * Delta.X, 0.f);
+
+		FVector SideDirProjectedOnGravDir = SideDir.ProjectOnToNormal(OldFloor.HitResult.Normal);
+		if (!SideDirProjectedOnGravDir.IsZero())
+		{
+			SideDir = (SideDir - SideDirProjectedOnGravDir).GetSafeNormal() * SideDir.Size();
+		}
+
+		// try left
+		if ( CheckLedgeDirection(OldLocation, SideDir, OldFloor) )
+		{
+			return SideDir;
+		}
+
+		// try right
+		SideDir *= -1.f;
+		if ( CheckLedgeDirection(OldLocation, SideDir, OldFloor) )
+		{
+			return SideDir;
+		}
+	}
+
+	return FVector::ZeroVector;
+}
+#endif
+
+
 
 void UDGCharacterMovementComponent::ApplyAccumulatedForces(float DeltaSeconds)
 {
@@ -1105,7 +1206,11 @@ void UDGCharacterMovementComponent::PhysWalking(float deltaTime, int32 Iteration
 		if (bCheckLedges && !CurrentFloor.IsWalkableFloor())
 		{
 			// calculate possible alternate movement
+			#if (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 5) || ENGINE_MAJOR_VERSION == 4
 			const FVector NewDelta = bTriedLedgeMove ? FVector::ZeroVector : GetLedgeMove(OldLocation, Delta, -VerticalDirection);
+			#elif ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+			const FVector NewDelta = bTriedLedgeMove ? FVector::ZeroVector : GetLedgeMove(OldLocation, Delta, OldFloor);
+			#endif
 			if (!NewDelta.IsZero())
 			{
 				// first revert this move
@@ -1380,7 +1485,11 @@ void UDGCharacterMovementComponent::Crouch(bool bClientSimulation)
 	}
 
 	// See if collision is already at desired size.
+	#if (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 5) || ENGINE_MAJOR_VERSION == 4
 	if (CharacterOwner->GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight() == CrouchedHalfHeight)
+	#elif ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+	if (CharacterOwner->GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight() == GetCrouchedHalfHeight())
+	#endif
 	{
 		if (!bClientSimulation)
 		{
@@ -1403,7 +1512,11 @@ void UDGCharacterMovementComponent::Crouch(bool bClientSimulation)
 	const float OldUnscaledHalfHeight = CharacterOwner->GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
 	const float OldUnscaledRadius = CharacterOwner->GetCapsuleComponent()->GetUnscaledCapsuleRadius();
 	// Height is not allowed to be smaller than radius.
+	#if (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 5) || ENGINE_MAJOR_VERSION == 4
 	const float ClampedCrouchedHalfHeight = FMath::Max3(0.f, OldUnscaledRadius, CrouchedHalfHeight);
+	#elif ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+	const float ClampedCrouchedHalfHeight = FMath::Max3(0.f, OldUnscaledRadius, GetCrouchedHalfHeight());
+	#endif
 	CharacterOwner->GetCapsuleComponent()->SetCapsuleSize(OldUnscaledRadius, ClampedCrouchedHalfHeight);
 	float HalfHeightAdjust = (OldUnscaledHalfHeight - ClampedCrouchedHalfHeight);
 	float ScaledHalfHeightAdjust = HalfHeightAdjust * ComponentScale;
