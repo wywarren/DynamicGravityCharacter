@@ -243,7 +243,7 @@ protected:
 
 	virtual void AdjustFloorHeight();
 	virtual void TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const override;
-	virtual bool StepUp(const FVector& FloorDirection, const FVector& Delta, const FHitResult& Hit, struct UCharacterMovementComponent::FStepDownResult* OutStepDownResult = NULL) override;
+	virtual bool StepUp(const FVector& FloorDirection, const FVector& Delta, const FHitResult& Hit, FStepDownResult* OutStepDownResult = NULL) override;
 	virtual FVector HandleSlopeBoosting(const FVector& SlideResult, const FVector& Delta, const float Time, const FVector& Normal, const FHitResult& Hit) const override;
 	virtual void RequestPathMove(const FVector& MoveInput) override;
 	virtual FVector GetLedgeMove(const FVector& OldLocation, const FVector& Delta, const FVector& GravDir) const override;

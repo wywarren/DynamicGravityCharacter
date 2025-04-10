@@ -324,7 +324,7 @@ void UDGCharacterMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResu
 	}
 }
 
-bool UDGCharacterMovementComponent::StepUp(const FVector& FloorDirection, const FVector& Delta, const FHitResult& InHit, UCharacterMovementComponent::FStepDownResult* OutStepDownResult)
+bool UDGCharacterMovementComponent::StepUp(const FVector& FloorDirection, const FVector& Delta, const FHitResult& InHit, FStepDownResult* OutStepDownResult)
 {
 	// SCOPE_CYCLE_COUNTER(STAT_CharStepUp);
 
@@ -2207,7 +2207,7 @@ void UDGCharacterMovementComponent::FindFloor(const FVector WalkableFloorNormal,
 					|| MovementBaseUtility::IsDynamicBase(MovementBase);
 			}
 
-			const bool IsActorBasePendingKill = BaseActor && BaseActor->IsPendingKill();
+			const bool IsActorBasePendingKill = BaseActor && !IsValid(BaseActor);
 
 			if (!bForceNextFloorCheck && !IsActorBasePendingKill && MovementBase)
 			{
